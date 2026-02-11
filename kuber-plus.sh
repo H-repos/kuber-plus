@@ -1,3 +1,7 @@
+# Format: "original-value/target-value"
+FUNC_NAME_REPLACEMENTS=("abc-service/abc" "xyz-prod/xyz")
+PREFIX="kube"
+
 alias pods="kubectl get pods"
 alias pod="pods"
 alias cm="kubectl get cm"
@@ -7,7 +11,7 @@ alias deploy="kubectl get deployments"
 alias ctx="kubectl config get-contexts"
 
 function login() {
-  cmd=(kubectl $CLUSTER_OPTIONS $NAMESPACE_OPTIONS exec -it)
+  cmd=(kubectl $CONTEXT_OPTIONS exec -it)
   if [ $# -eq 2 ]; then
     "${cmd[@]}" "$1" -c "$2" -- sh
   elif [ $# -eq 1 ]; then
@@ -18,13 +22,19 @@ function login() {
 generate_function(){
   local cluster=$1
   local namespace=$2
-  local func_name="kuber${namespace}/${cluster}"
+  local context=$3
+  local func_name="${namespace}/${cluster}"
+
+  for replacement in "${FUNC_NAME_REPLACEMENTS[@]}"; do
+    func_name=$(echo "$func_name" | sed "s/$replacement/")
+  done
+
+  func_name="${PREFIX}${func_name}"
   local func=$(cat <<EOF
 ${func_name}() {
-  PS1="[$namespace@$cluster]$ "
-  CLUSTER_OPTIONS="--cluster=$cluster"
-  NAMESPACE_OPTIONS="--namespace=$namespace"
-  alias kubectl="kubectl --cluster=$cluster --namespace=$namespace"
+  PS1="[${namespace}@${cluster}]$ "
+  CONTEXT_OPTIONS="--context=${context}"
+  alias kubectl='kubectl --context="${context}"'
 }
 EOF
 )
@@ -32,7 +42,9 @@ EOF
   echo "generated: $func_name"
 }
 
-kubectl config view -o jsonpath='{range .contexts[*]}{.context.cluster}{"@"}{.context.namespace}{"\n"}{end}' \
-  | while IFS='@' read -r cluster namespace; do
-    generate_function $cluster $namespace
+JSONPATH_TEMPLATE='{range .contexts[*]}{.context.cluster}{"@"}{.context.namespace}{"@"}{.name}{"\n"}{end}'
+
+kubectl config view -o jsonpath="$JSONPATH_TEMPLATE" \
+  | while IFS='@' read -r cluster namespace context; do
+    generate_function "$cluster" "$namespace" "$context"
   done
